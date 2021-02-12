@@ -1,0 +1,288 @@
+```{r, echo = F}
+options(scipen = 999)
+library(tidyverse)
+library(lubridate)
+library(gtools)
+```
+
+```{r, echo = F}
+gen_info_full = read_csv("gen_info_full.csv")
+test_labels_xgb_all = read_csv("test_labels_xgb_all.csv")
+gen_info_full = gen_info_full %>% select(-X1)
+test_labels_xgb_all = test_labels_xgb_all %>% select(-X1)
+gen_info_full = cbind(gen_info_full, test_labels_xgb_all)
+rm(test_labels_xgb_all)
+gen_info_full$month = month(gen_info_full$date)
+```
+
+## M-firms
+
+```{r}
+firms_all = gen_info_full %>% group_by(firm_id) %>% summarise(noncompetitive = sum(one_predicted), single = sum(one), n_bids = n())
+firms_all$noncompetitive = replace_na(firms_all$noncompetitive, 0)
+firms_all = firms_all %>%  mutate(ratio_noncompetitive = noncompetitive/n_bids, ratio_single = single/n_bids)
+firms_proc = gen_info_full %>% group_by(firm_id, procurer_reg_num) %>% summarise(n = n()) %>% group_by(firm_id) %>% summarise(n_buyers = n())
+firms_all = left_join(firms_all, firms_proc)
+rm(firms_proc)
+```
+
+```{r}
+ggplot()+
+  geom_histogram(data = firms_all, aes(x = ratio_noncompetitive), alpha = 0.5, color = "grey40")+
+  geom_histogram(data = firms_all %>% dplyr::filter(ratio_noncompetitive == 1), aes(x = ratio_noncompetitive), fill = "darkblue")+
+xlab("Share of ucompetitive bids for each firm")+
+ylab("Count")+
+theme_minimal()
+```
+```{r}
+ggplot()+
+  geom_histogram(data = firms_all, aes(x = ratio_single), alpha = 0.5, color = "grey40")+
+  geom_histogram(data = firms_all %>% dplyr::filter(ratio_single == 1), aes(x = ratio_single), fill = "darkblue")+
+xlab("Share of single bids for each firm")+
+ylab("Count")+
+theme_minimal()
+```
+```{r}
+ggplot()+
+  geom_bin2d(data = firms_all, aes(x = ratio_single, y = ratio_noncompetitive), alpha = 0.9, binwidth = c(0.1, 0.1))+
+xlab("Share of single bids for each firm")+
+ylab("Share of ucompetitive bids for each firm")+
+scale_fill_gradient(low="white", high="darkblue") +
+theme_minimal()
+```
+
+```{r}
+monopolists_strict = firms_all %>% filter(ratio_noncompetitive == 1 & ratio_single == 1 & n_buyers > 1)
+round(nrow(monopolists_strict)*100/nrow(firms_all),2)
+```
+```{r}
+monopolists_strict$monop = 1
+monop_bids = left_join(gen_info_full %>% select(firm_id, auction_id, one, diff_date, one_predicted, length, month), monopolists_strict %>% select(firm_id, monop))
+monop_bids$monop = replace_na(monop_bids$monop, 0)
+monop_bids %>% filter(one == 1 & monop == 1) %>% count()*100/ monop_bids%>% count()
+```
+
+Validation 
+```{r}
+monop_bids$diff_date_day = floor(monop_bids$diff_date/(3600*24))
+monop_bids$diff_date_hour = floor(monop_bids$diff_date/(3600))
+monop_share = monop_bids %>% ungroup() %>% filter(one == 1 & one_predicted == 1) %>%  group_by(diff_date_day, length) %>% summarise(n_monop = sum(monop), n_all = n()) %>% mutate(share_monop = n_monop/n_all)
+```
+
+```{r}
+monop_share %>% group_by(length) %>% summarise(n_all = sum(n_all))
+```
+
+```{r}
+ggplot(monop_share %>% filter(length == 6 & diff_date_day < 7)) +
+  geom_col(aes(x = as.factor(diff_date_day), y = share_monop), alpha = 0.5, col = "grey40") +
+  geom_text(aes(x = as.factor(diff_date_day), y = share_monop, label = round(share_monop, 3)), vjust = 1.5, color = "black") +
+  xlab("Days left to the deadline")+
+  ylab("Ratio of M-bids to total uncompetitive, single-auction bids")+
+  theme_minimal()
+```
+
+```{r}
+ggplot(monop_bids %>% filter(one == 1 & one_predicted == 1 & length == 7 & diff_date_day < 8))+
+  geom_density(aes(x = diff_date_hour, fill = as.factor(monop)), alpha = 0.5, col = "gray40")+
+labs(x = "Hours left to the deadline", 
+     y = "Density", fill = "M-firm?")+
+scale_fill_manual(values = c("grey40", "darkblue")) +
+theme_minimal()
+```
+
+```{r}
+rm(firms_all, monop_bids, monop_share)
+```
+
+## Regions and competition
+```{r}
+region_procs = gen_info_full %>% group_by(region, procurer_reg_num) %>% summarise(n = n()) %>% group_by(region) %>% summarise(n_procs = n())
+region_firms = gen_info_full %>% group_by(region, firm_id) %>% summarise(n = n()) %>% group_by(region) %>% summarise(n_firms = n())
+region_uncompet = gen_info_full %>% group_by(region) %>% summarise(n_all = n(), n_uncomp = sum(one_predicted))%>% mutate(uncomp_rate = n_uncomp/n_all)
+regions = left_join(region_procs, region_firms )
+regions = regions %>% mutate(ratio_firms_procs = n_firms/n_procs)
+regions = left_join(regions, region_uncompet %>% select(region, uncomp_rate))
+rm(region_firms, region_uncompet, region_procs)
+```
+
+```{r}
+quantile(regions$ratio_firms_procs, probs = seq(0,1,0.05))
+```
+
+```{r}
+ggplot()+
+  geom_histogram(data = regions, aes(x = ratio_firms_procs), alpha = 0.5, color = "grey40", bins = 13)+
+geom_histogram(data = regions %>% dplyr::filter(ratio_firms_procs <= 5), aes(x = ratio_firms_procs), fill = "darkblue", bins = 13)+
+xlab("Firms per one procurer")+
+ylab("Count")+
+theme_minimal()
+```
+
+```{r}
+ggplot()+
+  geom_label(data = regions, aes(label = region, x = ratio_firms_procs, y = uncomp_rate), position = "nudge", size = 3)+
+  geom_label(data = regions %>% filter(ratio_firms_procs <= 5), aes(label = region, x = ratio_firms_procs, y = uncomp_rate), fill ="darkblue", alpha = 0.5,  position = "nudge", size = 3)+
+  xlim(0, 30) +
+  xlab("Firms per one procurer")+
+  ylab("Share of ucompetitive bids")+
+  theme_minimal()
+```
+```{r}
+ggplot()+
+  geom_point(data = regions, aes(x = ratio_firms_procs, y = uncomp_rate), col = "darkblue", size = 2)+
+  xlim(0, 30) +
+  xlab("Firms per procurer")+
+  ylab("Share of ucompetitive bids")+
+  theme_minimal()
+```
+
+```{r}
+rm(regions)
+```
+
+## C-firms
+```{r}
+auctions_all = gen_info_full %>% group_by(auction_id, one) %>% summarise(noncompetitive = sum(one_predicted), n_bids = n())
+auctions_all = auctions_all %>% mutate(competitive = n_bids - noncompetitive)
+auctions_all = auctions_all %>% ungroup()
+auctions_all %>% filter(one == 0 & noncompetitive > 1) %>%  count()*100/ auctions_all %>% filter(one == 0) %>%  count()
+```
+
+```{r}
+suspicious = auctions_all %>% filter(noncompetitive >= 2)
+au_firms = inner_join(gen_info_full %>% select(auction_id, firm_id, price), suspicious %>% select(auction_id))
+win = au_firms %>% group_by(auction_id) %>% summarise(price = min(price))
+win$win = 1
+suspicious = left_join(au_firms, win)
+suspicious$win = replace_na(suspicious$win, 0)
+rm(win, au_firms)
+```
+
+```{r}
+save = suspicious %>% group_by(firm_id) %>% summarise(sum_win = sum(win)) %>% filter(sum_win > 0 & firm_id != "F0")
+suspicious = inner_join(suspicious, save)
+save = suspicious %>% group_by(auction_id) %>% summarise(n = n()) %>% filter(n > 1)
+suspicious = inner_join(suspicious, save)
+rm(save)
+```
+
+```{r}
+#C-firms pairs
+col_detection = suspicious %>% select(auction_id, firm_id)
+auctions = col_detection %>% select(auction_id) %>% unique()
+col_detection$firm_id_num = str_replace_all(col_detection$firm_id, "F", "")
+col_detection$firm_id_num = as.numeric(col_detection$firm_id_num)
+pairs = data.frame()
+```
+
+```{r}
+for(au in 1:nrow(auctions)){
+col_detection_au = col_detection %>% dplyr::filter(auction_id == auctions[au,1,1])
+col_detection_au = col_detection_au %>% arrange(firm_id_num)
+pairs_au = dplyr::as_data_frame(combinations(n=nrow(col_detection_au),r=2,v=col_detection_au$firm_id_num,repeats.allowed=F))
+pairs = rbind(pairs, pairs_au)
+}
+```
+
+```{r}
+colnames(pairs) = c("firm_id1", "firm_id2")
+pairs = pairs %>% dplyr::filter(firm_id1 != 0)
+write.csv(pairs, "pairs_1.csv")
+
+pairs_count = pairs %>% group_by(firm_id1, firm_id2) %>% summarise(n_times = n())
+pairs_count = pairs_count %>% dplyr::filter(n_times > 1)
+write.csv(pairs_count, "pairs_count_1.csv")
+```
+
+```{r}
+pairs_count$firm_id1 = paste("F",pairs_count$firm_id1, sep = "")
+pairs_count$firm_id2 = paste("F",pairs_count$firm_id2, sep = "")
+rm(pairs, pairs_au, au, auctions, col_detection, col_detection_au)
+```
+
+```{r}
+pairs_au = dplyr::data_frame()
+pairs = pairs_count %>% select(firm_id1, firm_id2) %>% unique()
+firms_au = suspicious %>% select(auction_id, firm_id)
+```
+
+```{r}
+for(p in 1:nrow(pairs)){
+susp_pairs = firms_au %>% dplyr::filter(firm_id == pairs[p, 1,1]| firm_id == pairs[p, 2, 1])
+pairs_au = rbind(pairs_au, susp_pairs)
+}
+rm(firms_au, susp_pairs, pairs, p)
+pairs_au = pairs_au %>% unique()
+```
+
+```{r}
+pairs_au$suspicious = 1
+diff_time = left_join(gen_info_full %>% select(auction_id, firm_id, one, one_predicted, date, diff_date, length, region), pairs_au)
+diff_time$suspicious = replace_na(diff_time$suspicious, 0)
+```
+
+```{r}
+# Auctions with C-firms
+count = diff_time %>% group_by(auction_id) %>% summarise(n_all = n(), n_susp = sum(suspicious))
+count$suspicious_au = ifelse(count$n_susp > 1, 1, 0)
+diff_time = left_join(diff_time, count %>% select(auction_id, suspicious_au) %>% unique())
+rm(count, pairs_au)
+```
+
+```{r}
+diff_time_d = diff_time %>% dplyr::filter(one == 0) %>% group_by(auction_id, suspicious_au, length) %>%  summarise(min_date = min(date), max_date = max(date), n_bids = n())
+diff_time_d$difftime_h = difftime(diff_time_d$max_date, diff_time_d$min_date, units = "hours")
+diff_time_d = diff_time_d %>% unique()
+```
+
+```{r}
+ggplot()+
+  geom_histogram(data = diff_time_d %>% dplyr::filter(length < 15), aes(x = length), col = "grey40", alpha = 0.5, binwidth = 1)+
+  geom_histogram(data = diff_time_d %>% dplyr::filter(length < 15 & length == 7), aes(x = length), fill = "darkblue", binwidth = 1)+
+xlab("Duration of the auction in days")+
+ylab("Count")+
+facet_grid(rows = vars(suspicious_au), scales = "free")+
+theme_minimal()
+```
+
+```{r}
+save= diff_time %>% group_by(auction_id, one_predicted) %>% filter(one_predicted == 1) %>% select(auction_id)
+save$uncomp_ex = 1
+diff_time_d_1 = left_join(diff_time_d, save %>% unique())
+diff_time_d_1$uncomp_ex = replace_na(diff_time_d_1$uncomp_ex, 0)
+```
+
+```{r}
+diff_time_d_1 %>% group_by(uncomp_ex, suspicious_au, length) %>% filter(uncomp_ex == 1 & length > 5 )%>% count()
+```
+
+```{r}
+ggplot(diff_time_d_1 %>% dplyr::filter(n_bids == 2 & uncomp_ex == 1 & length == 6))+
+  geom_boxplot(aes(x = as.factor(suspicious_au), y = difftime_h))+
+xlab("Did two C-firms place uncompetitive bids?")+
+ylab("Hours between the first and the last bid")+
+theme_minimal()
+```
+```{r}
+diff_time_d %>% dplyr::filter(bid_cat != "other" & length == 7) %>% group_by(suspicious_au, n_bids) %>% summarise(median = median(difftime_h))
+```
+```{r}
+ggplot(pairs_count %>% filter(n_times < 20))+
+  geom_histogram(aes(x = n_times), col = "grey40", alpha = 0.5, binwidth = 1)+
+xlab("Number of interactions between procurer and firm")+
+ylab("Count")+
+theme_minimal()
+```
+
+```{r}
+ggplot(pairs_count %>% filter(n_times < 20))+
+  geom_point(aes(x = n_times), col = "grey40", alpha = 0.5, binwidth = 1)+
+xlab("Number of interactions between procurer and firm")+
+ylab("Count")+
+theme_minimal()
+```
+
+```{r}
+rm(suspicious, diff_time_d)
+```
