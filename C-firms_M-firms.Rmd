@@ -5,6 +5,7 @@ library(lubridate)
 library(gtools)
 ```
 
+## loading data
 ```{r, echo = F}
 gen_info_full = read_csv("gen_info_full.csv")
 test_labels_xgb_all = read_csv("test_labels_xgb_all.csv")
@@ -15,7 +16,7 @@ rm(test_labels_xgb_all)
 gen_info_full$month = month(gen_info_full$date)
 ```
 
-## M-firms
+## finding M-firms
 
 ```{r}
 firms_all = gen_info_full %>% group_by(firm_id) %>% summarise(noncompetitive = sum(one_predicted), single = sum(one), n_bids = n())
@@ -62,7 +63,7 @@ monop_bids$monop = replace_na(monop_bids$monop, 0)
 monop_bids %>% filter(one == 1 & monop == 1) %>% count()*100/ monop_bids%>% count()
 ```
 
-Validation 
+## verifying M-firm bid timing
 ```{r}
 monop_bids$diff_date_day = floor(monop_bids$diff_date/(3600*24))
 monop_bids$diff_date_hour = floor(monop_bids$diff_date/(3600))
@@ -141,7 +142,7 @@ ggplot()+
 rm(regions)
 ```
 
-## C-firms
+## Finding C-firms
 ```{r}
 auctions_all = gen_info_full %>% group_by(auction_id, one) %>% summarise(noncompetitive = sum(one_predicted), n_bids = n())
 auctions_all = auctions_all %>% mutate(competitive = n_bids - noncompetitive)
