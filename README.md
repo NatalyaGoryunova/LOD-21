@@ -1,6 +1,7 @@
 # LOD-21
 
-The data is contained in gen_info_full.csv. The features of chapter 3.3 have been pregenerated, and are already in the data.
+The data is contained in gen_info_full.csv (available at https://drive.google.com/file/d/13jGF_65uXgFCB28fdMg3DCtYElTzNn6M/view?usp=sharing). 
+The features of chapter 3.3 have been pregenerated, and are already in the data.
 
 The file Noisylabels_tuning (run with Jupyter Notebook) provides the prediction model of competitive and uncompetitive bids using CleanLab.
 If you run this file you get:
